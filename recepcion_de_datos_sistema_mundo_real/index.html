@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serial Data Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+
+        header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 1em;
+            text-align: center;
+        }
+
+        main {
+            padding: 1em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1em 0;
+        }
+
+        table th, table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+
+        table th {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            color: white;
+            background-color: #4CAF50;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Serial Data Viewer</h1>
+    </header>
+    <main>
+        <button id="connectBtn">Connect to Serial Port</button>
+        <button id="exportBtn" disabled>Export to CSV</button>
+        <table id="dataTable">
+            <thead>
+                <tr>
+                    <th>distancia_izquierda</th>
+                    <th>distancia_derecha</th>
+                    <th>distancia_izquierda_duration</th>
+                    <th>distancia_derecha_duration</th>
+                    <th>IN1</th>
+                    <th>IN2</th>
+                    <th>IN3</th>
+                    <th>IN4</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </main>
+
+    <script>
+        const dataTable = document.getElementById('dataTable').querySelector('tbody');
+        const exportBtn = document.getElementById('exportBtn');
+        const connectBtn = document.getElementById('connectBtn');
+        let port;
+        let reader;
+
+        async function connectSerial() {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                connectBtn.textContent = "Connected";
+                connectBtn.disabled = true;
+                exportBtn.disabled = false;
+                readSerial();
+            } catch (error) {
+                console.error("Error connecting to serial port:", error);
+            }
+        }
+
+        async function readSerial() {
+            const textDecoder = new TextDecoderStream();
+            const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+            reader = textDecoder.readable.getReader();
+
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    if (value) {
+                        processSerialData(value);
+                        await delay(1000); // Wait for 1 second between readings
+                    }
+                }
+            } catch (error) {
+                console.error("Error reading from serial port:", error);
+            } finally {
+                reader.releaseLock();
+            }
+        }
+
+        function processSerialData(data) {
+            const rows = data.split("\n").filter(row => row.trim() !== "");
+            rows.forEach(row => {
+                const rowData = row.split(",");
+                if (rowData.length === 8) {
+                    addDataRow(rowData);
+                }
+            });
+        }
+
+        function addDataRow(rowData) {
+            const row = document.createElement('tr');
+            rowData.forEach(data => {
+                const cell = document.createElement('td');
+                cell.textContent = data;
+                row.appendChild(cell);
+            });
+
+            // Add Estado column based on IN values
+            const estadoCell = document.createElement('td');
+            const estado = calculateEstado(rowData.slice(4, 8));
+            estadoCell.textContent = estado;
+            row.appendChild(estadoCell);
+
+            dataTable.appendChild(row);
+        }
+
+        function calculateEstado(inputs) {
+            const [IN1, IN2, IN3, IN4] = inputs.map(Number);
+            if (IN1 === 1 && IN2 === 0 && IN3 === 1 && IN4 === 0) return "Avanza";
+            if (IN1 === 0 && IN2 === 1 && IN3 === 0 && IN4 === 1) return "Retrocede";
+            if (IN1 === 1 && IN2 === 0 && IN3 === 0 && IN4 === 1) return "Derecha";
+            if (IN1 === 0 && IN2 === 1 && IN3 === 1 && IN4 === 0) return "Izquierda";
+            if (IN1 === 0 && IN2 === 0 && IN3 === 0 && IN4 === 0) return "Quieto";
+            return "Desconocido";
+        }
+
+        function exportToCSV() {
+            let csvContent = 'data:text/csv;charset=utf-8,';
+            csvContent += 'distancia_izquierda,distancia_derecha,distancia_izquierda_duration,distancia_derecha_duration,IN1,IN2,IN3,IN4\n';
+            const rows = dataTable.rows;
+
+            for (let i = 1; i < rows.length; i++) { // Start from 1 to skip header row
+                const cells = rows[i].cells;
+                const row = [];
+                for (let j = 0; j < cells.length - 1; j++) { // Skip the last column (Estado)
+                    row.push(cells[j].textContent);
+                }
+                csvContent += row.join(',') + '\n';
+            }
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', 'serial_data.csv');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        connectBtn.addEventListener('click', connectSerial);
+        exportBtn.addEventListener('click', exportToCSV);
+    </script>
+</body>
+</html>
